@@ -12,7 +12,12 @@ app.use(cors());
 app.use(express.json());
 
 const BASE = process.env.FAKESTORE_BASE_URL || "https://fakestoreapi.com";
-const PORT = Number(process.env.PORT || 5001);
+// const PORT = Number(process.env.PORT || 5001);
+const PORT = process.env.PORT || 5000;
+
+app.listen(PORT, "0.0.0.0", () => {
+  console.log("Server running on", PORT);
+});
 const JWT_SECRET = process.env.JWT_SECRET || "dev_secret_change_me";
 
 // Stripe: keep backend running even if STRIPE_SECRET_KEY missing
