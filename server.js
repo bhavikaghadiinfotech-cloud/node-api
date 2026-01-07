@@ -13,10 +13,10 @@ app.use(express.json());
 
 const BASE = process.env.FAKESTORE_BASE_URL || "https://fakestoreapi.com";
 // const PORT = Number(process.env.PORT || 5001);
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 5001;
 
 app.listen(PORT, "0.0.0.0", () => {
-  console.log("Server running on", PORT);
+  console.log(`Backend running on http://0.0.0.0:${PORT}`);
 });
 const JWT_SECRET = process.env.JWT_SECRET || "dev_secret_change_me";
 
