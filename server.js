@@ -46,9 +46,7 @@ function authMiddleware(req, res, next) {
 }
 
 // Health
-app.get("/api/health", (req, res) => {
-  res.json({ ok: true, service: "backend", time: new Date().toISOString() });
-});
+app.get("/health", (req, res) => res.status(200).send("OK"));
 
 // AUTH
 app.post("/api/auth/register", async (req, res) => {
