@@ -11,9 +11,19 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// IMPORTANT: If you set FAKESTORE_BASE_URL on Render incorrectly, /api/products will fail.
-// Best value: https://fakestoreapi.com
-const BASE = process.env.FAKESTORE_BASE_URL || "https://fakestoreapi.com";
+/**
+ * NOTE:
+ * fakestoreapi.com is returning 403 from Render in your case.
+ * So we add browser-like headers to avoid 403.
+ *
+ * If it STILL returns 403 (because of Render IP blocking), switch BASE to:
+ * https://dummyjson.com
+ * (kept as default fallback below)
+ */
+
+// Prefer env if you want. Otherwise use DummyJSON (more reliable on cloud hosting).
+// To use Fakestore again, set FAKESTORE_BASE_URL=https://fakestoreapi.com in Render env.
+const BASE = process.env.FAKESTORE_BASE_URL || "https://dummyjson.com";
 
 // Render/hosting will provide PORT. For local, fallback can be 5001.
 const PORT = Number(process.env.PORT) || 5001;
@@ -29,6 +39,24 @@ const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:5173";
 
 // In-memory users (demo)
 const users = []; // { id, name, email, passwordHash }
+
+/**
+ * Upstream fetch helper (adds headers that often prevent 403)
+ */
+function upstreamGet(url) {
+  return axios.get(url, {
+    timeout: 20000,
+    headers: {
+      Accept: "application/json",
+      // Browser-like UA to reduce 403 blocks
+      "User-Agent":
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      // These help some upstreams
+      Referer: "https://fakestoreapi.com/",
+      Origin: "https://fakestoreapi.com",
+    },
+  });
+}
 
 function authMiddleware(req, res, next) {
   const header = req.headers.authorization || "";
@@ -129,19 +157,21 @@ app.get("/api/auth/me", authMiddleware, (req, res) => {
 });
 
 /**
- * PRODUCTS (proxy fakestore)
- * FIX: return real upstream error + timeout to prevent hanging
+ * PRODUCTS
+ * Works with:
+ * - Fakestore: returns an array
+ * - DummyJSON: returns { products: [...] }
  */
 app.get("/api/products", async (req, res) => {
   const url = `${BASE}/products`;
 
   try {
-    const { data } = await axios.get(url, {
-      timeout: 15000,
-      headers: { Accept: "application/json" },
-    });
+    const { data } = await upstreamGet(url);
 
-    return res.json(data);
+    // DummyJSON returns { products: [...] }, Fakestore returns array
+    const list = Array.isArray(data) ? data : data?.products || data;
+
+    return res.json(list);
   } catch (err) {
     console.error("UPSTREAM /products FAILED", {
       url,
@@ -165,11 +195,9 @@ app.get("/api/products/:id", async (req, res) => {
   const url = `${BASE}/products/${req.params.id}`;
 
   try {
-    const { data } = await axios.get(url, {
-      timeout: 15000,
-      headers: { Accept: "application/json" },
-    });
+    const { data } = await upstreamGet(url);
 
+    // DummyJSON returns product object, Fakestore returns product object
     return res.json(data);
   } catch (err) {
     console.error("UPSTREAM /products/:id FAILED", {
@@ -235,7 +263,7 @@ app.post("/api/checkout/create-session", authMiddleware, async (req, res) => {
 // START SERVER (only once)
 const server = app.listen(PORT, "0.0.0.0", () => {
   console.log(`Backend running on port ${PORT}`);
-  console.log("FAKESTORE_BASE_URL:", BASE);
+  console.log("BASE:", BASE);
 });
 
 server.on("error", (err) => {
