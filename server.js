@@ -13,7 +13,7 @@ app.use(express.json());
 
 const BASE = process.env.FAKESTORE_BASE_URL || "https://fakestoreapi.com";
 // const PORT = Number(process.env.PORT || 5001);
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, "0.0.0.0", () => {
   console.log("Server running on", PORT);
