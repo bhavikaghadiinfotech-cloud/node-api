@@ -12,17 +12,10 @@ app.use(cors());
 app.use(express.json());
 
 const BASE = process.env.FAKESTORE_BASE_URL || "https://fakestoreapi.com";
-// const PORT = Number(process.env.PORT || 5001);
+
+// Render/hosting will provide PORT. For local, fallback can be 5001.
 const PORT = Number(process.env.PORT) || 5001;
 
-const server = app.listen(PORT, "0.0.0.0", () => {
-  console.log(`Backend running on port ${PORT}`);
-});
-
-server.on("error", (err) => {
-  console.error("Server failed to start:", err);
-  process.exit(1);
-});
 const JWT_SECRET = process.env.JWT_SECRET || "dev_secret_change_me";
 
 // Stripe: keep backend running even if STRIPE_SECRET_KEY missing
@@ -58,13 +51,16 @@ app.post("/api/auth/register", async (req, res) => {
   try {
     const { name, email, password } = req.body || {};
     if (!name || !email || !password) {
-      return res.status(400).json({ message: "name, email, password required" });
+      return res
+        .status(400)
+        .json({ message: "name, email, password required" });
     }
 
     const exists = users.find(
       (u) => u.email.toLowerCase() === String(email).toLowerCase()
     );
-    if (exists) return res.status(409).json({ message: "Email already registered" });
+    if (exists)
+      return res.status(409).json({ message: "Email already registered" });
 
     const passwordHash = await bcrypt.hash(password, 10);
 
@@ -82,7 +78,10 @@ app.post("/api/auth/register", async (req, res) => {
       { expiresIn: "2h" }
     );
 
-    return res.json({ token, user: { id: user.id, name: user.name, email: user.email } });
+    return res.json({
+      token,
+      user: { id: user.id, name: user.name, email: user.email },
+    });
   } catch (e) {
     return res.status(500).json({ message: "Register failed" });
   }
@@ -109,7 +108,10 @@ app.post("/api/auth/login", async (req, res) => {
       { expiresIn: "2h" }
     );
 
-    return res.json({ token, user: { id: user.id, name: user.name, email: user.email } });
+    return res.json({
+      token,
+      user: { id: user.id, name: user.name, email: user.email },
+    });
   } catch (e) {
     return res.status(500).json({ message: "Login failed" });
   }
@@ -143,7 +145,7 @@ app.post("/api/checkout/create-session", authMiddleware, async (req, res) => {
   try {
     if (!stripe) {
       return res.status(500).json({
-        message: "Stripe key missing. Add STRIPE_SECRET_KEY in backend/.env",
+        message: "Stripe key missing. Add STRIPE_SECRET_KEY in environment.",
       });
     }
 
@@ -178,7 +180,12 @@ app.post("/api/checkout/create-session", authMiddleware, async (req, res) => {
   }
 });
 
-// IMPORTANT: keep this at bottom
-app.listen(PORT, () => {
-  console.log(`Backend running on http://localhost:${PORT}`);
+// START SERVER (only once)
+const server = app.listen(PORT, "0.0.0.0", () => {
+  console.log(`Backend running on port ${PORT}`);
+});
+
+server.on("error", (err) => {
+  console.error("Server failed to start:", err);
+  process.exit(1);
 });
