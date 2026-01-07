@@ -12,52 +12,48 @@ app.use(cors());
 app.use(express.json());
 
 /**
- * NOTE:
- * fakestoreapi.com is returning 403 from Render in your case.
- * So we add browser-like headers to avoid 403.
- *
- * If it STILL returns 403 (because of Render IP blocking), switch BASE to:
- * https://dummyjson.com
- * (kept as default fallback below)
+ * AUTO-SWITCH PRODUCT API
+ * - Local → FakeStore
+ * - Render → DummyJSON (FakeStore blocks Render IPs with 403)
  */
+const isRender = !!process.env.RENDER;
 
-// Prefer env if you want. Otherwise use DummyJSON (more reliable on cloud hosting).
-// To use Fakestore again, set FAKESTORE_BASE_URL=https://fakestoreapi.com in Render env.
-const BASE = process.env.FAKESTORE_BASE_URL || "https://dummyjson.com";
+const BASE =
+  process.env.FAKESTORE_BASE_URL ||
+  (isRender ? "https://dummyjson.com" : "https://fakestoreapi.com");
 
-// Render/hosting will provide PORT. For local, fallback can be 5001.
+// Render provides PORT automatically
 const PORT = Number(process.env.PORT) || 5001;
 
 const JWT_SECRET = process.env.JWT_SECRET || "dev_secret_change_me";
 
-// Stripe: keep backend running even if STRIPE_SECRET_KEY missing
+// Stripe (optional)
 const stripe = process.env.STRIPE_SECRET_KEY
   ? new Stripe(process.env.STRIPE_SECRET_KEY)
   : null;
 
 const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:5173";
 
-// In-memory users (demo)
-const users = []; // { id, name, email, passwordHash }
+// In-memory users (demo only)
+const users = [];
 
 /**
- * Upstream fetch helper (adds headers that often prevent 403)
+ * Axios helper with browser-like headers
  */
 function upstreamGet(url) {
   return axios.get(url, {
     timeout: 20000,
     headers: {
       Accept: "application/json",
-      // Browser-like UA to reduce 403 blocks
       "User-Agent":
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-      // These help some upstreams
-      Referer: "https://fakestoreapi.com/",
-      Origin: "https://fakestoreapi.com",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36",
     },
   });
 }
 
+/**
+ * AUTH MIDDLEWARE
+ */
 function authMiddleware(req, res, next) {
   const header = req.headers.authorization || "";
   const token = header.startsWith("Bearer ") ? header.slice(7) : null;
@@ -65,16 +61,17 @@ function authMiddleware(req, res, next) {
   if (!token) return res.status(401).json({ message: "No token" });
 
   try {
-    const decoded = jwt.verify(token, JWT_SECRET);
-    req.user = decoded;
-    return next();
-  } catch (e) {
-    return res.status(401).json({ message: "Invalid token" });
+    req.user = jwt.verify(token, JWT_SECRET);
+    next();
+  } catch {
+    res.status(401).json({ message: "Invalid token" });
   }
 }
 
-// Health
-app.get("/health", (req, res) => res.status(200).send("OK"));
+/**
+ * HEALTH
+ */
+app.get("/health", (req, res) => res.send("OK"));
 
 /**
  * AUTH
@@ -83,190 +80,116 @@ app.post("/api/auth/register", async (req, res) => {
   try {
     const { name, email, password } = req.body || {};
     if (!name || !email || !password) {
-      return res
-        .status(400)
-        .json({ message: "name, email, password required" });
+      return res.status(400).json({ message: "Missing fields" });
     }
 
-    const exists = users.find(
-      (u) => u.email.toLowerCase() === String(email).toLowerCase()
-    );
-    if (exists) {
-      return res.status(409).json({ message: "Email already registered" });
+    if (users.find((u) => u.email === email)) {
+      return res.status(409).json({ message: "Email exists" });
     }
 
     const passwordHash = await bcrypt.hash(password, 10);
-
-    const user = {
-      id: String(Date.now()),
-      name,
-      email,
-      passwordHash,
-    };
+    const user = { id: Date.now().toString(), name, email, passwordHash };
     users.push(user);
 
-    const token = jwt.sign(
-      { id: user.id, name: user.name, email: user.email },
-      JWT_SECRET,
-      { expiresIn: "2h" }
-    );
+    const token = jwt.sign(user, JWT_SECRET, { expiresIn: "2h" });
 
-    return res.json({
-      token,
-      user: { id: user.id, name: user.name, email: user.email },
-    });
+    res.json({ token, user: { id: user.id, name, email } });
   } catch (e) {
-    console.error("Register failed:", e);
-    return res.status(500).json({ message: "Register failed" });
+    res.status(500).json({ message: "Register failed" });
   }
 });
 
 app.post("/api/auth/login", async (req, res) => {
   try {
     const { email, password } = req.body || {};
-    if (!email || !password) {
-      return res.status(400).json({ message: "email, password required" });
-    }
-
-    const user = users.find(
-      (u) => u.email.toLowerCase() === String(email).toLowerCase()
-    );
+    const user = users.find((u) => u.email === email);
     if (!user) return res.status(401).json({ message: "Invalid credentials" });
 
     const ok = await bcrypt.compare(password, user.passwordHash);
     if (!ok) return res.status(401).json({ message: "Invalid credentials" });
 
-    const token = jwt.sign(
-      { id: user.id, name: user.name, email: user.email },
-      JWT_SECRET,
-      { expiresIn: "2h" }
-    );
+    const token = jwt.sign(user, JWT_SECRET, { expiresIn: "2h" });
 
-    return res.json({
-      token,
-      user: { id: user.id, name: user.name, email: user.email },
-    });
-  } catch (e) {
-    console.error("Login failed:", e);
-    return res.status(500).json({ message: "Login failed" });
+    res.json({ token, user: { id: user.id, name: user.name, email } });
+  } catch {
+    res.status(500).json({ message: "Login failed" });
   }
 });
 
 app.get("/api/auth/me", authMiddleware, (req, res) => {
-  return res.json({ user: req.user });
+  res.json({ user: req.user });
 });
 
 /**
  * PRODUCTS
- * Works with:
- * - Fakestore: returns an array
- * - DummyJSON: returns { products: [...] }
+ * Works for FakeStore + DummyJSON
  */
 app.get("/api/products", async (req, res) => {
-  const url = `${BASE}/products`;
-
   try {
-    const { data } = await upstreamGet(url);
-
-    // DummyJSON returns { products: [...] }, Fakestore returns array
-    const list = Array.isArray(data) ? data : data?.products || data;
-
-    return res.json(list);
+    const { data } = await upstreamGet(`${BASE}/products`);
+    res.json(Array.isArray(data) ? data : data.products);
   } catch (err) {
-    console.error("UPSTREAM /products FAILED", {
-      url,
-      message: err.message,
-      code: err.code,
-      status: err.response?.status,
-      responseData: err.response?.data,
-    });
-
-    return res.status(502).json({
+    res.status(502).json({
       message: "Upstream API failed",
-      upstream: url,
+      upstream: `${BASE}/products`,
       error: err.message,
-      code: err.code,
-      upstreamStatus: err.response?.status || null,
+      status: err.response?.status,
     });
   }
 });
 
 app.get("/api/products/:id", async (req, res) => {
-  const url = `${BASE}/products/${req.params.id}`;
-
   try {
-    const { data } = await upstreamGet(url);
-
-    // DummyJSON returns product object, Fakestore returns product object
-    return res.json(data);
+    const { data } = await upstreamGet(`${BASE}/products/${req.params.id}`);
+    res.json(data);
   } catch (err) {
-    console.error("UPSTREAM /products/:id FAILED", {
-      url,
-      message: err.message,
-      code: err.code,
-      status: err.response?.status,
-      responseData: err.response?.data,
-    });
-
-    return res.status(502).json({
+    res.status(502).json({
       message: "Upstream API failed",
-      upstream: url,
+      upstream: `${BASE}/products/${req.params.id}`,
       error: err.message,
-      code: err.code,
-      upstreamStatus: err.response?.status || null,
+      status: err.response?.status,
     });
   }
 });
 
 /**
- * STRIPE CHECKOUT (requires login)
+ * STRIPE CHECKOUT
  */
 app.post("/api/checkout/create-session", authMiddleware, async (req, res) => {
   try {
     if (!stripe) {
-      return res.status(500).json({
-        message: "Stripe key missing. Add STRIPE_SECRET_KEY in environment.",
-      });
+      return res.status(500).json({ message: "Stripe not configured" });
     }
 
-    const { cartItems } = req.body || {};
-    if (!Array.isArray(cartItems) || cartItems.length === 0) {
-      return res.status(400).json({ message: "Cart is empty" });
+    const { cartItems } = req.body || [];
+    if (!cartItems.length) {
+      return res.status(400).json({ message: "Cart empty" });
     }
-
-    const line_items = cartItems.map((item) => ({
-      quantity: Math.max(1, Number(item.qty || 1)),
-      price_data: {
-        currency: "usd",
-        product_data: {
-          name: String(item.title || "Product"),
-          images: item.image ? [String(item.image)] : [],
-        },
-        unit_amount: Math.round(Number(item.price || 0) * 100),
-      },
-    }));
 
     const session = await stripe.checkout.sessions.create({
       mode: "payment",
-      line_items,
-      success_url: `${FRONTEND_URL}/success?session_id={CHECKOUT_SESSION_ID}`,
+      line_items: cartItems.map((item) => ({
+        quantity: item.qty || 1,
+        price_data: {
+          currency: "usd",
+          unit_amount: Math.round(item.price * 100),
+          product_data: { name: item.title },
+        },
+      })),
+      success_url: `${FRONTEND_URL}/success`,
       cancel_url: `${FRONTEND_URL}/cart`,
     });
 
-    return res.json({ url: session.url });
-  } catch (err) {
-    console.error("Stripe session creation failed:", err);
-    return res.status(500).json({ message: "Stripe session creation failed" });
+    res.json({ url: session.url });
+  } catch {
+    res.status(500).json({ message: "Stripe failed" });
   }
 });
 
-// START SERVER (only once)
-const server = app.listen(PORT, "0.0.0.0", () => {
+/**
+ * START SERVER (ONLY ONCE)
+ */
+app.listen(PORT, "0.0.0.0", () => {
   console.log(`Backend running on port ${PORT}`);
-  console.log("BASE:", BASE);
-});
-
-server.on("error", (err) => {
-  console.error("Server failed to start:", err);
-  process.exit(1);
+  console.log("Using API:", BASE);
 });
