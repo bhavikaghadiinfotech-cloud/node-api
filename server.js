@@ -12,15 +12,21 @@ app.use(cors());
 app.use(express.json());
 
 /**
- * AUTO-SWITCH PRODUCT API
- * - Local → FakeStore
- * - Render → DummyJSON (FakeStore blocks Render IPs with 403)
+ * 🔒 HARD RULE
+ * FakeStore blocks Render (403)
+ * DummyJSON works everywhere
+ *
+ * → Production / Render = DummyJSON
+ * → Local development = FakeStore
  */
-const isRender = !!process.env.RENDER;
+const IS_PRODUCTION =
+  process.env.NODE_ENV === "production" ||
+  !!process.env.RENDER ||
+  !!process.env.RENDER_EXTERNAL_URL;
 
-const BASE =
-  process.env.FAKESTORE_BASE_URL ||
-  (isRender ? "https://dummyjson.com" : "https://fakestoreapi.com");
+const BASE = IS_PRODUCTION
+  ? "https://dummyjson.com"
+  : "https://fakestoreapi.com";
 
 // Render provides PORT automatically
 const PORT = Number(process.env.PORT) || 5001;
@@ -38,7 +44,7 @@ const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:5173";
 const users = [];
 
 /**
- * Axios helper with browser-like headers
+ * Axios helper
  */
 function upstreamGet(url) {
   return axios.get(url, {
@@ -74,6 +80,18 @@ function authMiddleware(req, res, next) {
 app.get("/health", (req, res) => res.send("OK"));
 
 /**
+ * DEBUG (REMOVE LATER)
+ */
+app.get("/debug/base", (req, res) => {
+  res.json({
+    BASE,
+    NODE_ENV: process.env.NODE_ENV || null,
+    RENDER: process.env.RENDER || null,
+    RENDER_EXTERNAL_URL: process.env.RENDER_EXTERNAL_URL || null,
+  });
+});
+
+/**
  * AUTH
  */
 app.post("/api/auth/register", async (req, res) => {
@@ -84,7 +102,7 @@ app.post("/api/auth/register", async (req, res) => {
     }
 
     if (users.find((u) => u.email === email)) {
-      return res.status(409).json({ message: "Email exists" });
+      return res.status(409).json({ message: "Email already exists" });
     }
 
     const passwordHash = await bcrypt.hash(password, 10);
@@ -94,7 +112,7 @@ app.post("/api/auth/register", async (req, res) => {
     const token = jwt.sign(user, JWT_SECRET, { expiresIn: "2h" });
 
     res.json({ token, user: { id: user.id, name, email } });
-  } catch (e) {
+  } catch {
     res.status(500).json({ message: "Register failed" });
   }
 });
@@ -122,7 +140,8 @@ app.get("/api/auth/me", authMiddleware, (req, res) => {
 
 /**
  * PRODUCTS
- * Works for FakeStore + DummyJSON
+ * DummyJSON → { products: [] }
+ * FakeStore → []
  */
 app.get("/api/products", async (req, res) => {
   try {
@@ -161,8 +180,8 @@ app.post("/api/checkout/create-session", authMiddleware, async (req, res) => {
       return res.status(500).json({ message: "Stripe not configured" });
     }
 
-    const { cartItems } = req.body || [];
-    if (!cartItems.length) {
+    const { cartItems } = req.body || {};
+    if (!cartItems?.length) {
       return res.status(400).json({ message: "Cart empty" });
     }
 
@@ -187,9 +206,10 @@ app.post("/api/checkout/create-session", authMiddleware, async (req, res) => {
 });
 
 /**
- * START SERVER (ONLY ONCE)
+ * START SERVER
  */
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`Backend running on port ${PORT}`);
+  console.log("Environment:", IS_PRODUCTION ? "PRODUCTION" : "LOCAL");
   console.log("Using API:", BASE);
 });
