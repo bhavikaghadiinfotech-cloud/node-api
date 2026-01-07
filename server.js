@@ -11,6 +11,8 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// IMPORTANT: If you set FAKESTORE_BASE_URL on Render incorrectly, /api/products will fail.
+// Best value: https://fakestoreapi.com
 const BASE = process.env.FAKESTORE_BASE_URL || "https://fakestoreapi.com";
 
 // Render/hosting will provide PORT. For local, fallback can be 5001.
@@ -46,7 +48,9 @@ function authMiddleware(req, res, next) {
 // Health
 app.get("/health", (req, res) => res.status(200).send("OK"));
 
-// AUTH
+/**
+ * AUTH
+ */
 app.post("/api/auth/register", async (req, res) => {
   try {
     const { name, email, password } = req.body || {};
@@ -59,8 +63,9 @@ app.post("/api/auth/register", async (req, res) => {
     const exists = users.find(
       (u) => u.email.toLowerCase() === String(email).toLowerCase()
     );
-    if (exists)
+    if (exists) {
       return res.status(409).json({ message: "Email already registered" });
+    }
 
     const passwordHash = await bcrypt.hash(password, 10);
 
@@ -83,6 +88,7 @@ app.post("/api/auth/register", async (req, res) => {
       user: { id: user.id, name: user.name, email: user.email },
     });
   } catch (e) {
+    console.error("Register failed:", e);
     return res.status(500).json({ message: "Register failed" });
   }
 });
@@ -113,6 +119,7 @@ app.post("/api/auth/login", async (req, res) => {
       user: { id: user.id, name: user.name, email: user.email },
     });
   } catch (e) {
+    console.error("Login failed:", e);
     return res.status(500).json({ message: "Login failed" });
   }
 });
@@ -121,26 +128,71 @@ app.get("/api/auth/me", authMiddleware, (req, res) => {
   return res.json({ user: req.user });
 });
 
-// PRODUCTS (proxy fakestore)
+/**
+ * PRODUCTS (proxy fakestore)
+ * FIX: return real upstream error + timeout to prevent hanging
+ */
 app.get("/api/products", async (req, res) => {
+  const url = `${BASE}/products`;
+
   try {
-    const { data } = await axios.get(`${BASE}/products`);
+    const { data } = await axios.get(url, {
+      timeout: 15000,
+      headers: { Accept: "application/json" },
+    });
+
     return res.json(data);
   } catch (err) {
-    return res.status(500).json({ message: "Failed to fetch products" });
+    console.error("UPSTREAM /products FAILED", {
+      url,
+      message: err.message,
+      code: err.code,
+      status: err.response?.status,
+      responseData: err.response?.data,
+    });
+
+    return res.status(502).json({
+      message: "Upstream API failed",
+      upstream: url,
+      error: err.message,
+      code: err.code,
+      upstreamStatus: err.response?.status || null,
+    });
   }
 });
 
 app.get("/api/products/:id", async (req, res) => {
+  const url = `${BASE}/products/${req.params.id}`;
+
   try {
-    const { data } = await axios.get(`${BASE}/products/${req.params.id}`);
+    const { data } = await axios.get(url, {
+      timeout: 15000,
+      headers: { Accept: "application/json" },
+    });
+
     return res.json(data);
   } catch (err) {
-    return res.status(500).json({ message: "Failed to fetch product" });
+    console.error("UPSTREAM /products/:id FAILED", {
+      url,
+      message: err.message,
+      code: err.code,
+      status: err.response?.status,
+      responseData: err.response?.data,
+    });
+
+    return res.status(502).json({
+      message: "Upstream API failed",
+      upstream: url,
+      error: err.message,
+      code: err.code,
+      upstreamStatus: err.response?.status || null,
+    });
   }
 });
 
-// STRIPE CHECKOUT (requires login)
+/**
+ * STRIPE CHECKOUT (requires login)
+ */
 app.post("/api/checkout/create-session", authMiddleware, async (req, res) => {
   try {
     if (!stripe) {
@@ -175,7 +227,7 @@ app.post("/api/checkout/create-session", authMiddleware, async (req, res) => {
 
     return res.json({ url: session.url });
   } catch (err) {
-    console.error(err);
+    console.error("Stripe session creation failed:", err);
     return res.status(500).json({ message: "Stripe session creation failed" });
   }
 });
@@ -183,6 +235,7 @@ app.post("/api/checkout/create-session", authMiddleware, async (req, res) => {
 // START SERVER (only once)
 const server = app.listen(PORT, "0.0.0.0", () => {
   console.log(`Backend running on port ${PORT}`);
+  console.log("FAKESTORE_BASE_URL:", BASE);
 });
 
 server.on("error", (err) => {
